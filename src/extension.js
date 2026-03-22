@@ -18,12 +18,17 @@
 
 import Clutter from 'gi://Clutter';
 import Meta from 'gi://Meta';
+import Mtk from 'gi://Mtk';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 import Gio from 'gi://Gio';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { PACKAGE_VERSION } from 'resource:///org/gnome/shell/misc/config.js';
+
+const GNOME_VER = parseInt(PACKAGE_VERSION);
+const IS_GNOME_49 = GNOME_VER >= 49;
 
 // Window edge action
 const WindowEdgeAction = {
@@ -236,9 +241,12 @@ class Manager {
                 }
                 return g._handleEvent(actor, event);
             };
-            global.stage.disconnectObject(g);
-            global.stage.connectObject(
-                'captured-event::touchpad',
+            let hasActor = !!g._actor;
+            let actor = hasActor ? g._actor : global.stage;
+            let signal = hasActor ? 'event::touchpad' : 'captured-event::touchpad';
+            actor.disconnectObject(g);
+            actor.connectObject(
+                signal,
                 g._newHandleEvent.bind(g),
                 g
             );
@@ -249,9 +257,12 @@ class Manager {
     _restoreFingerCountFlip() {
         // Restore 3 finger gesture
         this._swipeMods.forEach((g) => {
-            global.stage.disconnectObject(g);
-            global.stage.connectObject(
-                'captured-event::touchpad',
+            let hasActor = !!g._actor;
+            let actor = hasActor ? g._actor : global.stage;
+            let signal = hasActor ? 'event::touchpad' : 'captured-event::touchpad';
+            actor.disconnectObject(g);
+            actor.connectObject(
+                signal,
                 g._handleEvent.bind(g),
                 g
             );
@@ -557,7 +568,7 @@ class Manager {
             return;
         }
         global.window_manager.emit("show-tile-preview",
-            global.display.get_focus_window(), new Meta.Rectangle(
+            global.display.get_focus_window(), new Mtk.Rectangle(
                 { x: rx, y: ry, width: rw, height: rh }
             )
             , this._monitorId
@@ -1038,7 +1049,7 @@ class Manager {
             }
             if (setmove) {
                 if (this._targetWindow.allows_move() &&
-                    !this._targetWindow.get_maximized()) {
+                    !(IS_GNOME_49 ? this._targetWindow.is_maximized() : this._targetWindow.get_maximized())) {
                     this._edgeAction = WindowEdgeAction.MOVE;
                 }
             }
@@ -1100,7 +1111,7 @@ class Manager {
                             let holdMove = this._getTapHoldMove();
 
                             if (!allowMove || holdMove) {
-                                if (!this._targetWindow.get_maximized() &&
+                                if (!(IS_GNOME_49 ? this._targetWindow.is_maximized() : this._targetWindow.get_maximized()) &&
                                     !this._targetWindow.isTiled) {
                                     this._edgeGestured = 1;
                                 }
@@ -1111,7 +1122,7 @@ class Manager {
                             else if (
                                 !this._edgeGestured &&
                                 !this._targetWindow.is_fullscreen() &&
-                                !this._targetWindow.get_maximized() &&
+                                !(IS_GNOME_49 ? this._targetWindow.is_maximized() : this._targetWindow.get_maximized()) &&
                                 this._targetWindow.allows_move()) {
                                 this._edgeAction = WindowEdgeAction.MOVE;
                                 return this._swipeUpdateMove();
@@ -1330,7 +1341,7 @@ class Manager {
             if (this._isEdge(WindowEdgeAction.MOVE_SNAP_TOP)) {
                 if (this._targetWindow.can_maximize()) {
                     this._resetWinPos();
-                    this._targetWindow.maximize(Meta.MaximizeFlags.BOTH);
+                    IS_GNOME_49 ? this._targetWindow.maximize() : this._targetWindow.maximize(Meta.MaximizeFlags.BOTH);
                 }
             }
             else if (this._isEdge(WindowEdgeAction.MOVE_SNAP_LEFT)) {
@@ -1550,7 +1561,7 @@ class Manager {
                         activeWin = global.display.get_focus_window();
                     }
                     if (activeWin && ((activeWin.allows_move() &&
-                        !activeWin.get_maximized()) || !isWin)) {
+                        !(IS_GNOME_49 ? activeWin.is_maximized() : activeWin.get_maximized())) || !isWin)) {
                         activeWin.activate(
                             Meta.CURRENT_TIME
                         );
@@ -2502,10 +2513,10 @@ class Manager {
             }
 
             let winCanMax = activeWin.allows_move() && activeWin.can_maximize();
-            let winIsMaximized = activeWin.get_maximized();
-            let winMaxed = Meta.MaximizeFlags.BOTH == winIsMaximized;
+            let winIsMaximized = IS_GNOME_49 ? activeWin.is_maximized() : activeWin.get_maximized();
+            let winMaxed = IS_GNOME_49 ? winIsMaximized : (Meta.MaximizeFlags.BOTH == winIsMaximized);
             if (activeWin.isTiled) {
-                winIsMaximized = Meta.MaximizeFlags.VERTICAL;
+                winIsMaximized = IS_GNOME_49 ? true : Meta.MaximizeFlags.VERTICAL;
             }
             let winIsFullscreen = activeWin.is_fullscreen();
             let allowFullscreen = this._getEnableFullscreen();
@@ -2608,7 +2619,7 @@ class Manager {
                         }
                         if (this._actionWidgets[wid] && (progress > 0)) {
                             if (ui == 1) {
-                                activeWin.maximize(Meta.MaximizeFlags.BOTH);
+                                IS_GNOME_49 ? activeWin.maximize() : activeWin.maximize(Meta.MaximizeFlags.BOTH);
                             }
                             else if (ui == 2) {
                                 this._setSnapWindow(0);
@@ -2647,7 +2658,7 @@ class Manager {
                             }
                             else if (ui == 6) {
                                 // restore
-                                activeWin.unmaximize(
+                                IS_GNOME_49 ? activeWin.unmaximize() : activeWin.unmaximize(
                                     Meta.MaximizeFlags.BOTH
                                 );
                                 if (activeWin.isTiled) {

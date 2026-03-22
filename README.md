@@ -1,3 +1,44 @@
+# Window Gestures (GNOME 49 Fix)
+
+Fork of [amarullz/windowgestures](https://github.com/amarullz/windowgestures) with fixes for GNOME Shell 49 compatibility.
+
+## GNOME 49 Changes
+
+The upstream repo added GNOME 49 to `metadata.json` ([PR #54](https://github.com/amarullz/windowgestures/pull/54)) but did not update the code for GNOME 49's breaking API changes, causing the extension to crash on load (see [issue #55](https://github.com/amarullz/windowgestures/issues/55), [#58](https://github.com/amarullz/windowgestures/issues/58), [#59](https://github.com/amarullz/windowgestures/issues/59)).
+
+### Fixes applied
+
+- **`Meta.Rectangle` removed in GNOME 49** - Replaced with `Mtk.Rectangle` (available since GNOME 45).
+- **`window.get_maximized()` removed** - Replaced with `window.is_maximized()` on GNOME 49+. This was the main crash (`TypeError: activeWin.get_maximized is not a function`).
+- **`window.maximize(flags)` / `unmaximize(flags)` no longer accept arguments** - Calls are now argument-free on GNOME 49+.
+- **Gesture signal/actor change (GNOME 49.4+)** - `TouchpadSwipeGesture` moved from `global.stage` with `captured-event::touchpad` to a per-gesture actor with `event::touchpad`. Handled via feature detection (`g._actor`) so it works on both 49.0-49.2 and 49.4+.
+
+All changes are backward-compatible with GNOME 45-48.
+
+### Known issue: horizontal swipe crash (GNOME Shell bug)
+
+There is a separate [GNOME Shell bug](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/8850) where horizontal 3/4-finger swipes crash with `this._pages[pageIndex] is undefined`. This is a bug in GNOME Shell itself (not the extension) and is fixed in GNOME Shell 49.4+. Ubuntu 25.10 ships gnome-shell 49.0-49.2 which does not include this fix.
+
+### Build & install
+
+```bash
+bash build.sh
+gnome-extensions install --force windowgestures@extension.amarullz.com.zip
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/windowgestures@extension.amarullz.com/schemas/
+```
+
+Log out and back in (Wayland requires a session restart), then enable:
+
+```bash
+gnome-extensions enable windowgestures@extension.amarullz.com
+```
+
+---
+
+## Original README:
+
+---
+
 # Window Gestures
 
 Window Gestures is GNOME Shell extension for managing window with touchpad gestures.
