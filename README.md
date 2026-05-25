@@ -33,6 +33,24 @@ Log out and back in (Wayland requires a session restart), then enable:
 gnome-extensions enable windowgestures@extension.amarullz.com
 ```
 
+## Additional fixes (GNOME 49/50 hardening)
+
+Further fixes applied on top of the GNOME 49 compatibility work above.
+
+### Fixes applied
+
+- **Window-close gesture shader crashed on GNOME 49+** - `_createShader()` used the legacy Clutter GLSL API (`Clutter.ShaderEffect` with `Clutter.ShaderType.FRAGMENT_SHADER` / `set_shader_source()`), which Mutter removed. It threw on every close-swipe, flooding the journal with `TypeError: ... ShaderType is undefined` and wasting CPU. The red-tint / dim feedback is now reimplemented on top of `Shell.GLSLEffect` (the supported effect API on GNOME 45-50+) and wrapped so it degrades to "no tint" instead of throwing, should the effect API ever change again.
+- **Kinetic fling could peg a CPU core** - `_velocityFlingHandler()` referenced an undefined `target` variable when two flings overlapped, throwing *before* the queue could drain and leaving the 4 ms (~250 Hz) `setInterval` spinning and erroring indefinitely. Fixed the reference (`now.target`).
+- **Actor/texture leak on disable** - `destroy()` now releases any leftover on-screen indicator widgets and the cached window-switcher actor, so nothing is orphaned across disable -> enable cycles (screen lock, extension updates). Live window actors (`Meta.WindowActor`) are deliberately left untouched.
+- **Defensive gesture-tracker hooks** - `_initFingerCountFlip()` now resolves GNOME's private swipe-tracker internals with optional chaining and drops any that are missing, so a future Shell rename degrades gracefully instead of failing `enable()` (and disabling the whole extension).
+
+### GNOME 50 readiness
+
+- Added `"50"` to `metadata.json` `shell-version`.
+- Verified against the [GNOME 49](https://gjs.guide/extensions/upgrading/gnome-shell-49.html) and [GNOME 50](https://gjs.guide/extensions/upgrading/gnome-shell-50.html) porting guides: the existing `IS_GNOME_49` handling is gated on `GNOME_VER >= 49`, so it already covers GNOME 50, and GNOME 50's documented breaking changes (X11 support removed, `easeAsync()` added, `keyboardManager` / `restart`-signal removals) do not affect this extension.
+
+These changes remain backward-compatible with GNOME 45-48.
+
 ---
 
 ## Original README:

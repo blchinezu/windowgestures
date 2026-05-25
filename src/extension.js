@@ -22,6 +22,7 @@ import Mtk from 'gi://Mtk';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 import Gio from 'gi://Gio';
+import GObject from 'gi://GObject';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -63,6 +64,56 @@ const WindowEdgeAction = {
 const WindowClassBlacklist = [
     "gjs"
 ];
+
+// Gesture feedback shader effect.
+//
+// GNOME 49 removed the legacy Clutter GLSL shader API (Clutter.ShaderType
+// is gone and Clutter.ShaderEffect.set_shader_source no longer works), so
+// the old _createShader() threw on every gesture frame. This reimplements
+// the same red-tint (close) / dim feedback on top of Shell.GLSLEffect, the
+// supported API across GNOME 45-50+.
+//
+// The pipeline is built from constant GLSL only (no instance state), so it
+// works regardless of when the base class calls build_pipeline(). The
+// shader variant is chosen at run time via the `mode` uniform; `mode`
+// defaults to 0.0 (close), so the only path actually used keeps working
+// even if uniform setup is ever a no-op on a future Shell.
+const GestureShaderEffect = GObject.registerClass(
+class GestureShaderEffect extends Shell.GLSLEffect {
+    _init(shaderType) {
+        super._init();
+        // Pipeline is built in super._init(); uniform locations are valid.
+        this._valueLocation = this.get_uniform_location('value');
+        // mode: 0.0 = close tint (default), 1.0 = dim
+        if (shaderType !== 'close') {
+            this.set_uniform_float(
+                this.get_uniform_location('mode'), 1, [1.0]
+            );
+        }
+    }
+
+    vfunc_build_pipeline() {
+        const declarations = 'uniform float value;\nuniform float mode;\n';
+        const code =
+            'if (mode < 0.5) {\n' +
+            '    cogl_color_out.g *= 1.0 - (0.3 * value);\n' +
+            '    cogl_color_out.b *= 1.0 - (0.34 * value);\n' +
+            '} else {\n' +
+            '    cogl_color_out.rgb *= 1.0 - value;\n' +
+            '}\n';
+        this.add_glsl_snippet(
+            Shell.SnippetHook.FRAGMENT, declarations, code, false
+        );
+    }
+
+    setValue(v) {
+        if (this._valueLocation == null || this._valueLocation < 0) {
+            this._valueLocation = this.get_uniform_location('value');
+        }
+        this.set_uniform_float(this._valueLocation, 1, [v]);
+        this.queue_repaint();
+    }
+});
 
 // Manager Class
 class Manager {
@@ -148,11 +199,26 @@ class Manager {
         this._virtualTouchpad = null;
         this._virtualKeyboard = null;
 
+        // Release leftover indicator actors / cached UI so nothing
+        // leaks across disable->enable cycles (screen lock, updates...).
+        // Only St.Widget indicators we created are destroyed; window
+        // actors (Meta.WindowActor) are never touched here.
+        let aw = this._actionWidgets || {};
+        let cacheActor = aw.cacheWinTabList?.actor;
+        if (cacheActor) {
+            try { cacheActor.destroy(); } catch (e) { }
+        }
+        for (let key in aw) {
+            if (aw[key] instanceof St.Widget) {
+                try { aw[key].destroy(); } catch (e) { }
+            }
+        }
+        this._actionWidgets = {};
+
         // Cleanup all variables
         this._clearVars();
         this._isettings = null;
         this._settings = null;
-        this._ShaderClass = null;
     }
 
     // Initialize variables
@@ -213,14 +279,18 @@ class Manager {
          * https://github.com/icedman/swap-finger-gestures-3-4
          * 
          */
+        // Resolve each swipe tracker defensively: these are private Shell
+        // internals that may be renamed/restructured in a future release.
+        // Drop any that no longer exist so enable() degrades gracefully
+        // instead of throwing and disabling the whole extension.
         this._swipeMods = [
-            Main.overview._swipeTracker._touchpadGesture,
-            Main.wm._workspaceAnimation._swipeTracker._touchpadGesture,
-            Main.overview._overview._controls
-                ._workspacesDisplay._swipeTracker._touchpadGesture,
-            Main.overview._overview._controls
-                ._appDisplay._swipeTracker._touchpadGesture
-        ];
+            Main.overview?._swipeTracker?._touchpadGesture,
+            Main.wm?._workspaceAnimation?._swipeTracker?._touchpadGesture,
+            Main.overview?._overview?._controls
+                ?._workspacesDisplay?._swipeTracker?._touchpadGesture,
+            Main.overview?._overview?._controls
+                ?._appDisplay?._swipeTracker?._touchpadGesture
+        ].filter(g => g);
         let me = this;
         this._swipeMods.forEach((g) => {
             g._newHandleEvent = (actor, event) => {
@@ -349,32 +419,17 @@ class Manager {
         return ui;
     }
 
-    // Create Shader Effect
+    // Create Shader Effect (gesture colour feedback)
     _createShader(type, actor, name) {
-        let fx = new Clutter.ShaderEffect(
-            { shader_type: Clutter.ShaderType.FRAGMENT_SHADER }
-        );
-        let shader = '';
-        if (type == 'close') {
-            shader =
-                'color.g *= 1-(0.3*value); ' +
-                'color.b *= 1-(0.34*value); ';
-        }
-        else {
-            shader =
-                'color.rgb *= 1.0-value; ';
-        }
-        fx.set_shader_source(
-            'uniform sampler2D tex; ' +
-            'uniform float value; ' +
-            'void main() { ' +
-            'vec4 color=texture2D(tex,cogl_tex_coord_in[0].st);' +
-            shader +
-            'cogl_color_out = color * cogl_color_in;}'
-        );
-        fx.set_uniform_value('tex', 0);
-        fx.setValue = function (v) {
-            fx.set_uniform_value('value', v);
+        let fx;
+        try {
+            fx = new GestureShaderEffect(type);
+        } catch (e) {
+            // Shader effects unavailable (e.g. a future Shell rendering
+            // API change) -- skip the visual feedback but never break the
+            // gesture itself. Callers all guard with `ui.fx?.<...>`.
+            logError(e, 'WindowGestures: shader effect unavailable');
+            return null;
         }
         if (actor) {
             fx._fxname = name;
@@ -441,7 +496,7 @@ class Manager {
         now.n++;
         if (me._velocityFlingQueue.length != 1) {
             // Another fling called
-            now.cb(1, target);
+            now.cb(1, now.target);
             clearIt = true;
         }
         else if (now.target >= now.max || now.n >= now.maxframe) {
